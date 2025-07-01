@@ -24,10 +24,10 @@ static int is_valid_command(const char *cmd) {
         if (!isprint(*p) && !isspace(*p)) return 0;
     }
     
-    // 特殊检查：cd 后必须跟空格
-    if (strncmp(cmd, "cd", 2) == 0 && cmd[2] != ' ' && cmd[2] != '\0') {
-        return 0;
-    }
+    // 特殊检查：cd 后必须跟空格（暂时不需要）
+    //if (strncmp(cmd, "cd", 2) == 0 && cmd[2] != ' ' && cmd[2] != '\0') {
+    //    return 0;
+    //}
     
     return 1;
 }
