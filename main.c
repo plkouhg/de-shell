@@ -19,15 +19,15 @@ void handle_sigint(int sig) {
 }
 
 void parse_and_expand_alias(char *line, char **args) {
-    // 保存原始输入副本
+    static char reconstructed_line[MAX_LINE];  // 全局静态变量，防止内存失效
+    memset(reconstructed_line, 0, sizeof(reconstructed_line));
+
     char original_line[MAX_LINE];
     strncpy(original_line, line, sizeof(original_line) - 1);
     original_line[sizeof(original_line) - 1] = '\0';
 
-    // 提取第一个 token，检查是否是 alias 名
     char *first_token = strtok(original_line, " \t\n");
 
-    // 如果输入为空
     if (!first_token) {
         args[0] = NULL;
         return;
@@ -35,21 +35,14 @@ void parse_and_expand_alias(char *line, char **args) {
 
     const char *alias_cmd = resolve_alias(first_token);
 
-    // 构造替换后的完整命令行
-    char reconstructed_line[MAX_LINE] = {0};
-
     if (alias_cmd) {
-        // 以别名开头构造
-        strncat(reconstructed_line, alias_cmd, sizeof(reconstructed_line) - strlen(reconstructed_line) - 1);
-
-        // 提取原始输入中 first_token 之后的部分
+        strncat(reconstructed_line, alias_cmd, sizeof(reconstructed_line) - 1);
         char *rest = line + (first_token - original_line) + strlen(first_token);
         strncat(reconstructed_line, rest, sizeof(reconstructed_line) - strlen(reconstructed_line) - 1);
     } else {
         strncpy(reconstructed_line, line, sizeof(reconstructed_line) - 1);
     }
 
-    // 正式解析 reconstructed_line 为 args[]
     int i = 0;
     args[i] = strtok(reconstructed_line, " \t\n");
     while (args[i] != NULL && i < MAX_ARGS - 1) {
