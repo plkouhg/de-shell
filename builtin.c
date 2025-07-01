@@ -8,9 +8,11 @@
 #include <grp.h>
 #include <sys/stat.h>
 #include "builtin.h"
-
+#include <regex.h>
+#include <limits.h>
 #define MAX_LINE 1024
-
+#define COLOR_CYAN    "\x1b[36m"
+#define COLOR_RESET   "\x1b[0m"
 char *history[HISTORY_SIZE];
 int history_count = 0;
 Alias aliases[MAX_ALIASES];
@@ -143,36 +145,283 @@ void my_echo(char **args) {
 }
 
 void my_grep(char **args) {
+    // 初始化选项变量
     int ignore_case = 0;
-    int pattern_index = 1;
-
-    if (args[1] && strcmp(args[1], "-i") == 0) {
-        ignore_case = 1;
-        pattern_index = 2;
+    int invert_match = 0;
+    int line_number = 0;
+    int count_only = 0;
+    int recursive = 0;
+    int files_with_matches = 0;
+    int only_matching = 0;
+    int extended_regex = 0;
+    int after_context = 0;
+    int before_context = 0;
+    int context_lines = 0;
+    
+    char *pattern = NULL;
+    int pattern_found = 0;
+    int file_args_start = 0;
+    
+    // 解析参数
+    for (int i = 1; args[i] != NULL; i++) {
+        if (strcmp(args[i], "-i") == 0) {
+            ignore_case = 1;
+        } else if (strcmp(args[i], "-v") == 0) {
+            invert_match = 1;
+        } else if (strcmp(args[i], "-n") == 0) {
+            line_number = 1;
+        } else if (strcmp(args[i], "-c") == 0) {
+            count_only = 1;
+        } else if (strcmp(args[i], "-r") == 0) {
+            recursive = 1;
+        } else if (strcmp(args[i], "-l") == 0) {
+            files_with_matches = 1;
+        } else if (strcmp(args[i], "-o") == 0) {
+            only_matching = 1;
+        } else if (strcmp(args[i], "-E") == 0) {
+            extended_regex = 1;
+        } else if (strcmp(args[i], "-A") == 0 && args[i+1] != NULL) {
+            after_context = 1;
+            context_lines = atoi(args[i+1]);
+            i++;
+        } else if (strcmp(args[i], "-B") == 0 && args[i+1] != NULL) {
+            before_context = 1;
+            context_lines = atoi(args[i+1]);
+            i++;
+        } else if (args[i][0] != '-' && !pattern_found) {
+            pattern = args[i];
+            pattern_found = 1;
+            file_args_start = i + 1;
+        }
     }
-
-    if (!args[pattern_index] || !args[pattern_index + 1]) {
-        fprintf(stderr, "Usage: grep [-i] pattern file\n");
+    
+    // 检查参数有效性
+    if (!pattern || !args[file_args_start]) {
+        fprintf(stderr, "Usage: grep [-i] [-v] [-n] [-c] [-r] [-l] [-o] [-E] [-A num] [-B num] pattern file...\n");
         return;
     }
+    
+    // 处理正则表达式
+    regex_t regex;
+    int reg_flags = REG_EXTENDED | (ignore_case ? REG_ICASE : 0);
+    if (regcomp(&regex, pattern, reg_flags) != 0) {
+        fprintf(stderr, "Invalid regular expression\n");
+        return;
+    }
+    
+    // 处理文件参数
+    for (int i = file_args_start; args[i] != NULL; i++) {
+        process_file_or_dir(args[i], pattern, &regex, 
+                          ignore_case, invert_match, line_number,
+                          count_only, recursive, files_with_matches,
+                          only_matching, extended_regex,
+                          after_context, before_context, context_lines);
+    }
+    
+    regfree(&regex);
+}
 
-    char *pattern = args[pattern_index];
-    char *filename = args[pattern_index + 1];
+// 辅助函数：处理文件或目录
+void process_file_or_dir(const char *path, const char *pattern, regex_t *regex,
+                        int ignore_case, int invert_match, int line_number,
+                        int count_only, int recursive, int files_with_matches,
+                        int only_matching, int extended_regex,
+                        int after_context, int before_context, int context_lines) {
+    struct stat statbuf;
+    if (stat(path, &statbuf) != 0) {
+        perror(path);
+        return;
+    }
+    
+    if (S_ISDIR(statbuf.st_mode)) {
+        if (recursive) {
+            process_directory(path, pattern, regex, 
+                            ignore_case, invert_match, line_number,
+                            count_only, files_with_matches,
+                            only_matching, extended_regex,
+                            after_context, before_context, context_lines);
+        } else {
+            fprintf(stderr, "grep: %s: Is a directory\n", path);
+        }
+    } else {
+        process_file(path, pattern, regex, 
+                    ignore_case, invert_match, line_number,
+                    count_only, files_with_matches,
+                    only_matching, extended_regex,
+                    after_context, before_context, context_lines);
+    }
+}
 
+// 辅助函数：处理目录
+void process_directory(const char *dirpath, const char *pattern, regex_t *regex,
+                      int ignore_case, int invert_match, int line_number,
+                      int count_only, int files_with_matches,
+                      int only_matching, int extended_regex,
+                      int after_context, int before_context, int context_lines) {
+    DIR *dir = opendir(dirpath);
+    if (!dir) {
+        perror(dirpath);
+        return;
+    }
+    
+    struct dirent *entry;
+    while ((entry = readdir(dir)) != NULL) {
+        if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0) {
+            continue;
+        }
+        
+        char fullpath[PATH_MAX];
+        snprintf(fullpath, sizeof(fullpath), "%s/%s", dirpath, entry->d_name);
+        
+        process_file_or_dir(fullpath, pattern, regex, 
+                          ignore_case, invert_match, line_number,
+                          count_only, 1, files_with_matches,
+                          only_matching, extended_regex,
+                          after_context, before_context, context_lines);
+    }
+    
+    closedir(dir);
+}
+
+// 辅助函数：处理单个文件
+void process_file(const char *filename, const char *pattern, regex_t *regex,
+                 int ignore_case, int invert_match, int line_number,
+                 int count_only, int files_with_matches,
+                 int only_matching, int extended_regex,
+                 int after_context, int before_context, int context_lines) {
     FILE *fp = fopen(filename, "r");
     if (!fp) {
         perror(filename);
         return;
     }
-
-    char line[1024];
+    
+    char line[4096];
+    int line_num = 0;
+    int match_count = 0;
+    int *matches = NULL;
+    int lines_allocated = 0;
+    int lines_printed = 0;
+    
+    // 如果需要上下文，我们需要存储匹配的行号
+    if (after_context || before_context) {
+        lines_allocated = 100;
+        matches = malloc(lines_allocated * sizeof(int));
+    }
+    
+    // 第一次遍历：查找匹配行
     while (fgets(line, sizeof(line), fp)) {
-        if ((ignore_case && strcasestr(line, pattern)) || (!ignore_case && strstr(line, pattern))) {
-            printf("%s", line);
+        line_num++;
+        int match = (regexec(regex, line, 0, NULL, 0) == 0);
+        if (invert_match) match = !match;
+        
+        if (match) {
+            if (count_only || files_with_matches) {
+                match_count++;
+            } else if (after_context || before_context) {
+                // 存储匹配行号
+                if (line_num >= lines_allocated) {
+                    lines_allocated *= 2;
+                    matches = realloc(matches, lines_allocated * sizeof(int));
+                }
+                matches[match_count++] = line_num;
+            }
         }
     }
-
+    
+    // 处理 -l 和 -c 选项
+    if (files_with_matches) {
+        if (match_count > 0) {
+            printf("%s\n", filename);
+        }
+        fclose(fp);
+        if (matches) free(matches);
+        return;
+    }
+    
+    if (count_only) {
+        printf("%s:%d\n", filename, match_count);
+        fclose(fp);
+        if (matches) free(matches);
+        return;
+    }
+    
+    // 第二次遍历：输出结果
+    rewind(fp);
+    line_num = 0;
+    int last_printed_line = -1;
+    
+    while (fgets(line, sizeof(line), fp)) {
+        line_num++;
+        int match = (regexec(regex, line, 0, NULL, 0) == 0);
+        if (invert_match) match = !match;
+        
+        // 处理上下文
+        int should_print = 0;
+        
+        if (match) {
+            should_print = 1;
+            if (before_context) {
+                // 打印前N行
+                int start = (line_num - context_lines > 1) ? line_num - context_lines : 1;
+                for (int i = start; i < line_num; i++) {
+                    if (i > last_printed_line) {
+                        print_line(filename, i, line, line_number, 0, pattern);
+                        last_printed_line = i;
+                    }
+                }
+            }
+        }
+        
+        if (match || 
+            (after_context && lines_printed < match_count && line_num <= matches[lines_printed] + context_lines)) {
+            should_print = 1;
+        }
+        
+        if (should_print && line_num > last_printed_line) {
+            print_line(filename, line_num, line, line_number, match && only_matching, pattern);
+            last_printed_line = line_num;
+            if (match) lines_printed++;
+        }
+    }
+    
     fclose(fp);
+    if (matches) free(matches);
+}
+
+// 辅助函数：打印一行
+void print_line(const char *filename, int line_num, const char *line, 
+               int show_line_number, int only_matching, char * pattern) {
+    if (only_matching) {
+        // 这里简化处理，实际需要提取匹配的部分
+        printf("%s\n", line);  // 实际实现需要更复杂的处理
+    } else {
+        char *match_start = strstr(line, pattern);
+        if (match_start) {
+            int prefix_len = match_start - line;
+            int match_len = strlen(pattern);
+            const char *highlight_color = COLOR_CYAN;
+            if (show_line_number) {
+                printf("%s:%d:", filename, line_num);
+            } else {
+                printf("%s:", filename);
+            }
+            
+            // 打印匹配前的部分
+            printf("%.*s", prefix_len, line);
+            
+            // 打印带颜色的匹配部分
+            printf("%s%.*s%s", highlight_color, match_len, match_start, COLOR_RESET);
+            
+            // 打印匹配后的部分
+            printf("%s", match_start + match_len);
+        } else {
+            if (show_line_number) {
+                printf("%s:%d:%s", filename, line_num, line);
+            } else {
+                printf("%s:%s", filename, line);
+            }
+        }
+    }
 }
 
 void my_type(char **args) {

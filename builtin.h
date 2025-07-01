@@ -3,6 +3,8 @@
 
 #include <stdio.h>
 #include <ctype.h>
+#include <regex.h>
+#include <limits.h>
 
 #define HISTORY_SIZE 100
 #define MAX_ALIASES 100
@@ -28,7 +30,27 @@ void load_history_from_file();
 void save_history_to_file();
 char *get_history_file_path();
 void show_prompt();
+//grep功能
+void process_file_or_dir(const char *path, const char *pattern, regex_t *regex,
+                        int ignore_case, int invert_match, int line_number,
+                        int count_only, int recursive, int files_with_matches,
+                        int only_matching, int extended_regex,
+                        int after_context, int before_context, int context_lines);
 
+void process_directory(const char *dirpath, const char *pattern, regex_t *regex,
+                      int ignore_case, int invert_match, int line_number,
+                      int count_only, int files_with_matches,
+                      int only_matching, int extended_regex,
+                      int after_context, int before_context, int context_lines);
+
+void process_file(const char *filename, const char *pattern, regex_t *regex,
+                 int ignore_case, int invert_match, int line_number,
+                 int count_only, int files_with_matches,
+                 int only_matching, int extended_regex,
+                 int after_context, int before_context, int context_lines);
+
+void print_line(const char *filename, int line_num, const char *line, 
+               int show_line_number, int only_matching, char *pattern);
 // alias 功能
 void add_alias(const char *name, const char *command);
 void show_aliases();
