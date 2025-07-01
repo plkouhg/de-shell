@@ -11,6 +11,7 @@
 
 #define MAX_LINE 1024
 #define MAX_ARGS 64
+#define MAX_COMMAND_LENGTH 2048
 
 void handle_sigint(int sig) {
     printf("\n");
@@ -99,7 +100,9 @@ int login_shell() {
 int main() {
     char *line;
     char *args[MAX_ARGS];
-
+    char command_buffer[MAX_COMMAND_LENGTH];
+    char temp_line[MAX_COMMAND_LENGTH];
+    
     signal(SIGINT, handle_sigint);
 
     if (!login_shell()) return 1;
@@ -108,8 +111,59 @@ int main() {
     load_aliases_from_file();
     while (1) {
         show_prompt();
+        command_buffer[0] = '\0'; // 清空命令缓冲区
+        temp_line[0]='\0';
         line = read_input_line();
+        if (!line) continue;
 
+        // 处理第一行
+        strncpy(temp_line, line, sizeof(temp_line) - 1);
+        temp_line[sizeof(temp_line) - 1] = '\0';
+        temp_line[strcspn(temp_line, "\n")] = '\0';
+        
+        // 初始化command_buffer
+        strncpy(command_buffer, temp_line, sizeof(command_buffer) - 1);
+        command_buffer[sizeof(command_buffer) - 1] = '\0';
+
+        // 检查是否需要续行
+        while (strlen(temp_line) > 0 && temp_line[strlen(temp_line) - 1] == '\\') {
+            // 移除续行符
+            temp_line[strlen(temp_line) - 1] = '\0';
+            
+            // 更新command_buffer（只移除最后的反斜杠）
+            size_t current_len = strlen(command_buffer);
+            if (current_len > 0 && command_buffer[current_len - 1] == '\\') {
+                command_buffer[current_len - 1] = '\0';
+            }
+
+            // 读取下一行
+            free(line); // 释放前一行内存
+            line = read_input_line();
+            if (!line) break;
+            
+            // 处理新行
+            strncpy(temp_line, line, sizeof(temp_line) - 1);
+            temp_line[sizeof(temp_line) - 1] = '\0';
+            temp_line[strcspn(temp_line, "\n")] = '\0';
+
+            // 检查缓冲区空间
+            if (strlen(command_buffer) + strlen(temp_line) >= sizeof(command_buffer) - 1) {
+                fprintf(stderr, "错误：命令过长，超出缓冲区限制！\n");
+                free(line);
+                command_buffer[0] = '\0'; // 清空无效命令
+                break;
+            }
+
+            // 安全拼接
+            strcat(command_buffer, temp_line);
+        }
+
+
+        free(line); // 释放旧内存
+        line = strdup(command_buffer); // 创建新拷贝
+        //printf("完整命令是: %s\n", line);
+        //以下逻辑保持不变
+        
         if (!line || !is_valid_command(line)) {
             free(line);
             continue;
