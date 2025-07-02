@@ -20,7 +20,7 @@ extern Alias aliases[MAX_ALIASES];
 extern int alias_count;
 
 int is_builtin(const char *cmd);
-int run_builtin(char **args, char *raw_line);
+int run_builtin(char **args, const char *raw_line);
 int handle_builtin(char **args, const char *full_line);
 void my_cd(char **args);
 void my_echo(char **args);
@@ -55,7 +55,7 @@ void process_file(const char *filename, const char *pattern, regex_t *regex,
                  int after_context, int before_context, int context_lines);
 
 void print_line(const char *filename, int line_num, const char *line, 
-               int show_line_number, int only_matching, char *pattern);
+               int show_line_number, int only_matching, const char *pattern);
                
 // alias 功能
 void add_alias(const char *name, const char *command);
