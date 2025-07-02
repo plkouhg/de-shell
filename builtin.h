@@ -5,6 +5,8 @@
 #include <ctype.h>
 #include <regex.h>
 #include <limits.h>
+#include <fcntl.h>
+#include <sys/stat.h>
 
 #define HISTORY_SIZE 100
 #define MAX_ALIASES 100

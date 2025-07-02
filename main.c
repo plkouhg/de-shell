@@ -7,6 +7,8 @@
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <signal.h>
+#include <fcntl.h>
+#include <sys/stat.h>
 #include "builtin.h"
 #include "input.h"
 
@@ -48,6 +50,47 @@ void parse_and_expand_alias(char *line, char **args) {
     while (args[i] != NULL && i < MAX_ARGS - 1) {
         args[++i] = strtok(NULL, " \t\n");
     }
+}
+
+// 新增：重定向解析函数
+void parse_redirection(char **args, char **input_file, char **output_file) {
+    *input_file = NULL;
+    *output_file = NULL;
+    
+    int i = 0;
+    while (args[i] != NULL) {
+        if (strcmp(args[i], "<") == 0) {
+            if (args[i+1] == NULL) {
+                fprintf(stderr, "语法错误: 缺少输入文件\n");
+            } else {
+                *input_file = args[i+1];
+                args[i] = NULL; // 移除重定向符号
+                args[i+1] = NULL; // 移除文件名
+            }
+        }
+        else if (strcmp(args[i], ">") == 0) {
+            if (args[i+1] == NULL) {
+                fprintf(stderr, "语法错误: 缺少输出文件\n");
+            } else {
+                *output_file = args[i+1];
+                args[i] = NULL;
+                args[i+1] = NULL;
+            }
+        }
+        i++;
+    }
+}
+
+// 新增：压缩参数数组（移除NULL）
+void compress_args(char **args) {
+    int i = 0, j = 0;
+    while (args[i]) {
+        if (args[i] != NULL) {
+            args[j++] = args[i];
+        }
+        i++;
+    }
+    args[j] = NULL;
 }
 
 int is_valid_command(char *line) {
@@ -193,7 +236,36 @@ int main() {
         pid_t pid = fork();
         if (pid < 0) {
             perror("fork failed");
-        } else if (pid == 0) {
+        } else if(pid == 0) {
+            // 新增：重定向解析
+            char *input_file = NULL;
+            char *output_file = NULL;
+            parse_redirection(args, &input_file, &output_file);
+            compress_args(args); // 移除重定向相关NULL
+            
+            // 新增：输入重定向
+            if (input_file) {
+                int fd = open(input_file, O_RDONLY);
+                if (fd < 0) {
+                    perror("打开输入文件失败");
+                    exit(EXIT_FAILURE);
+                }
+                dup2(fd, STDIN_FILENO);
+                close(fd);
+            }
+            
+            // 新增：输出重定向
+            if (output_file) {
+                int fd = open(output_file, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+                if (fd < 0) {
+                    perror("创建输出文件失败");
+                    exit(EXIT_FAILURE);
+                }
+                dup2(fd, STDOUT_FILENO);
+                close(fd);
+            }
+    
+        
             if (is_builtin_cmd) {
                 run_builtin(args, line_copy);
             } else {
