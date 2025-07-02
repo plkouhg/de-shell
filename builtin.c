@@ -424,12 +424,86 @@ void print_line(const char *filename, int line_num, const char *line,
     }
 }
 
+// 检查是否为内置命令
+int is_builtin(const char *cmd) {
+    const char *builtins[] = {
+        "ls", "cd", "cat", "grep", "echo", "history", 
+        "clearhistory", "alias", "unalias", "type", NULL
+    };
+    
+    for (int i = 0; builtins[i]; i++) {
+        if (strcmp(cmd, builtins[i]) == 0) {
+            return 1;
+        }
+    }
+    return 0;
+}
+
+// 在PATH中查找命令的绝对路径
+char *find_command_in_path(const char *cmd) {
+    if (strchr(cmd, '/')) {
+        // 如果包含路径，直接检查文件
+        if (access(cmd, X_OK) == 0) {
+            return strdup(cmd);
+        }
+        return NULL;
+    }
+
+    char *path = getenv("PATH");
+    if (!path) return NULL;
+
+    char *path_copy = strdup(path);
+    char *dir = strtok(path_copy, ":");
+    char *full_path = malloc(PATH_MAX);
+
+    while (dir) {
+        snprintf(full_path, PATH_MAX, "%s/%s", dir, cmd);
+        if (access(full_path, X_OK) == 0) {
+            free(path_copy);
+            return full_path;
+        }
+        dir = strtok(NULL, ":");
+    }
+
+    free(full_path);
+    free(path_copy);
+    return NULL;
+}
+
+// 实现type命令
 void my_type(char **args) {
     if (!args[1]) {
         fprintf(stderr, "type: missing argument\n");
         return;
     }
-    printf("%s is a shell builtin\n", args[1]);
+
+    for (int i = 1; args[i]; i++) {
+        const char *cmd = args[i];
+        
+        // 1. 检查是否是内置命令
+        if (is_builtin(cmd)) {
+            printf("%s is a shell builtin\n", cmd);
+            continue;
+        }
+        
+        // 2. 检查是否是别名
+        const char *alias_cmd = resolve_alias(cmd);
+        if (alias_cmd) {
+            printf("%s is aliased to '%s'\n", cmd, alias_cmd);
+            continue;
+        }
+        
+        // 3. 检查是否是外部命令
+        char *full_path = find_command_in_path(cmd);
+        if (full_path) {
+            printf("%s is %s\n", cmd, full_path);
+            free(full_path);
+            continue;
+        }
+        
+        // 4. 未找到命令
+        printf("%s: not found\n", cmd);
+    }
 }
 
 void add_history(const char *cmd) {
@@ -628,7 +702,10 @@ int handle_builtin(char **args, const char *full_line) {
         } else {
             fprintf(stderr, "unalias: missing alias name\n");
         }
-    } else return 0;
+    } else if (strcmp(args[0], "type") == 0) {
+        my_type(args);
+    }
+    else return 0;
     return 1;
 }
 
