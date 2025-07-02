@@ -138,7 +138,118 @@ int login_shell() {
         return 0;
     }
 }
-
+// 新增管道执行函数
+void execute_pipeline(char **args, int pipe_count, int background, int is_builtin_cmd, const char *raw_line) {
+    // 分割命令
+    // 创建命令数组（二维数组），注意：不能初始化，所以手动置NULL
+    char *commands[pipe_count + 1][MAX_ARGS];
+    // 初始化数组为NULL
+    for (int i = 0; i < pipe_count + 1; i++) {
+        for (int j = 0; j < MAX_ARGS; j++) {
+            commands[i][j] = NULL;
+        }
+    }
+    int cmd_index = 0, arg_index = 0;
+    
+    for (int i = 0; args[i]; i++) {
+        if (strcmp(args[i], "|") == 0) {
+            commands[cmd_index][arg_index] = NULL;
+            cmd_index++;
+            arg_index = 0;
+        } else {
+            commands[cmd_index][arg_index++] = args[i];
+        }
+    }
+    commands[cmd_index][arg_index] = NULL;
+    int cmd_total = cmd_index + 1;
+    
+    // 创建管道
+    int pipes[pipe_count][2];
+    for (int i = 0; i < pipe_count; i++) {
+        if (pipe(pipes[i]) < 0) {
+            perror("pipe failed");
+            return;
+        }
+    }
+    
+    pid_t pids[cmd_total];
+    for (int i = 0; i < cmd_total; i++) {
+        pids[i] = fork();
+        
+        if (pids[i] < 0) {
+            perror("fork failed");
+            return;
+        } else if (pids[i] == 0) {
+            // 子进程 - 设置管道连接
+            if (i > 0) {
+                dup2(pipes[i-1][0], STDIN_FILENO); // 前一个命令的输出
+            }
+            if (i < cmd_total - 1) {
+                dup2(pipes[i][1], STDOUT_FILENO); // 当前命令的输出
+            }
+            
+            // 关闭所有管道描述符
+            for (int j = 0; j < pipe_count; j++) {
+                close(pipes[j][0]);
+                close(pipes[j][1]);
+            }
+            
+            // 处理重定向
+            char *input_file = NULL;
+            char *output_file = NULL;
+            parse_redirection(commands[i], &input_file, &output_file);
+            compress_args(commands[i]);
+            
+            if (input_file) {
+                int fd = open(input_file, O_RDONLY);
+                if (fd < 0) {
+                    perror("打开输入文件失败");
+                    exit(EXIT_FAILURE);
+                }
+                dup2(fd, STDIN_FILENO);
+                close(fd);
+            }
+            
+            if (output_file) {
+                int fd = open(output_file, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+                if (fd < 0) {
+                    perror("创建输出文件失败");
+                    exit(EXIT_FAILURE);
+                }
+                dup2(fd, STDOUT_FILENO);
+                close(fd);
+            }
+            
+            // 执行命令
+            if (is_builtin(commands[i][0]) && 
+                (strcmp(commands[i][0], "cd") == 0 || 
+                 strcmp(commands[i][0], "alias") == 0 || 
+                 strcmp(commands[i][0], "unalias") == 0)) {
+                // 管道中的特殊内置命令需要特殊处理
+                run_builtin(commands[i], raw_line);
+                exit(0);
+            } else {
+                execvp(commands[i][0], commands[i]);
+                perror(commands[i][0]);
+                exit(EXIT_FAILURE);
+            }
+        }
+    }
+    
+    // 父进程 - 关闭所有管道并等待
+    for (int i = 0; i < pipe_count; i++) {
+        close(pipes[i][0]);
+        close(pipes[i][1]);
+    }
+    
+    if (!background) {
+        for (int i = 0; i < cmd_total; i++) {
+            waitpid(pids[i], NULL, 0);
+        }
+    } else {
+        fprintf(stderr, "[Pipeline %d] running in background\n", getpid());
+    }
+}
 int main() {
     char *line;
     char *args[MAX_ARGS];
@@ -233,58 +344,69 @@ int main() {
             }
         }
 
-        pid_t pid = fork();
-        if (pid < 0) {
-            perror("fork failed");
-        } else if(pid == 0) {
-            // 新增：重定向解析
-            char *input_file = NULL;
-            char *output_file = NULL;
-            parse_redirection(args, &input_file, &output_file);
-            compress_args(args); // 移除重定向相关NULL
-            
-            // 新增：输入重定向
-            if (input_file) {
-                int fd = open(input_file, O_RDONLY);
-                if (fd < 0) {
-                    perror("打开输入文件失败");
-                    exit(EXIT_FAILURE);
-                }
-                dup2(fd, STDIN_FILENO);
-                close(fd);
-            }
-            
-            // 新增：输出重定向
-            if (output_file) {
-                int fd = open(output_file, O_WRONLY | O_CREAT | O_TRUNC, 0644);
-                if (fd < 0) {
-                    perror("创建输出文件失败");
-                    exit(EXIT_FAILURE);
-                }
-                dup2(fd, STDOUT_FILENO);
-                close(fd);
-            }
-    
-        
-            if (is_builtin_cmd) {
-                run_builtin(args, line_copy);
-            } else {
-                execvp(args[0], args);
-            }
-            exit(1);
+        // ============= 修改开始 =============
+        // 检查是否有管道
+        int pipe_count = 0;
+        for (int i = 0; args[i]; i++) {
+            if (strcmp(args[i], "|") == 0) pipe_count++;
+        }
+
+        if (pipe_count > 0) {
+            execute_pipeline(args, pipe_count, background, is_builtin_cmd, line_copy);
         } else {
-            if (background) {
-                usleep(1000);
-                fprintf(stderr, "[PID %d] running in background\n", pid);
-                fflush(stderr);
+            // 没有管道时执行单个命令
+            pid_t pid = fork();
+            if (pid < 0) {
+                perror("fork failed");
+            } else if(pid == 0) {
+                // 子进程处理重定向
+                char *input_file = NULL;
+                char *output_file = NULL;
+                parse_redirection(args, &input_file, &output_file);
+                compress_args(args);
+                
+                if (input_file) {
+                    int fd = open(input_file, O_RDONLY);
+                    if (fd < 0) {
+                        perror("打开输入文件失败");
+                        exit(EXIT_FAILURE);
+                    }
+                    dup2(fd, STDIN_FILENO);
+                    close(fd);
+                }
+                
+                if (output_file) {
+                    int fd = open(output_file, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+                    if (fd < 0) {
+                        perror("创建输出文件失败");
+                        exit(EXIT_FAILURE);
+                    }
+                    dup2(fd, STDOUT_FILENO);
+                    close(fd);
+                }
+                
+                // 执行命令
+                if (is_builtin_cmd) {
+                    run_builtin(args, line_copy);
+                } else {
+                    execvp(args[0], args);
+                }
+                exit(1);
             } else {
-                int status;
-                waitpid(pid, &status, 0);
-                if (!is_builtin_cmd && WIFEXITED(status) && WEXITSTATUS(status) != 0) {
-                    fprintf(stderr, "Unknown command: %s\n", args[0]);
+                if (background) {
+                    usleep(1000);
+                    fprintf(stderr, "[PID %d] running in background\n", pid);
+                    fflush(stderr);
+                } else {
+                    int status;
+                    waitpid(pid, &status, 0);
+                    if (!is_builtin_cmd && WIFEXITED(status) && WEXITSTATUS(status) != 0) {
+                        fprintf(stderr, "Unknown command: %s\n", args[0]);
+                    }
                 }
             }
         }
+        // ============= 修改结束 =============
 
         free(line);
         free(line_copy);
