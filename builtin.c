@@ -80,7 +80,6 @@ void my_cd(char **args) {
     }
 }
 
-
 void my_cat(char **args) {
     int show_line_numbers = 0;
     int start_index = 1;
@@ -405,7 +404,7 @@ void process_file(const char *filename, const char *pattern, regex_t *regex,
 
 // 辅助函数：打印一行
 void print_line(const char *filename, int line_num, const char *line, 
-               int show_line_number, int only_matching, char * pattern) {
+               int show_line_number, int only_matching,const char * pattern) {
     if (only_matching) {
         // 这里简化处理，实际需要提取匹配的部分
         printf("%s\n", line);  // 实际实现需要更复杂的处理
@@ -677,7 +676,7 @@ void load_aliases_from_file() {
     fclose(fp);
 }
 
-int run_builtin(char **args, char *raw_line) {
+int run_builtin(char **args,const char *raw_line) {
     // 新增：临时保存原始标准输入输出
     int saved_stdin = dup(STDIN_FILENO);
     int saved_stdout = dup(STDOUT_FILENO);
