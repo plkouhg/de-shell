@@ -1,8 +1,10 @@
 #include <stdio.h>
+#include <stdlib.h>
 #include <ctype.h>
 #include <termios.h>
 #include <unistd.h>
 #include <string.h>
+#include <dirent.h>
 #include "builtin.h"
 #include "input.h" 
 
@@ -44,86 +46,278 @@ void filter_and_add_history(const char *cmd) {
     add_history(cmd);
 }
 
+
+
+
 char *read_input_line() {
+
     static int history_index = -1;
+
     static char buffer[MAX_INPUT];
+
     int pos = 0;
+
     buffer[0] = '\0';
 
+
     struct termios oldt, newt;
+
     tcgetattr(STDIN_FILENO, &oldt);
+
     newt = oldt;
+
     newt.c_lflag &= ~(ICANON | ECHO);
+
     tcsetattr(STDIN_FILENO, TCSANOW, &newt);
 
+
+    int tab_count = 0;
+
+
     while (1) {
+
         char ch;
+
         if (read(STDIN_FILENO, &ch, 1) <= 0) continue;
 
+
         if (ch == '\n') {
+
             buffer[pos] = '\0';
+
             printf("\n");
+
             break;
+
         }
 
+
+        // 上下方向键（历史）
+
         if (ch == 27) {
+
             char seq[2];
+
             if (read(STDIN_FILENO, &seq[0], 1) <= 0) continue;
+
             if (read(STDIN_FILENO, &seq[1], 1) <= 0) continue;
 
+
             if (seq[0] == '[' && (seq[1] == 'A' || seq[1] == 'B')) {
+
                 printf("\033[2K\r");
-                
+
+
                 if (seq[1] == 'A') {
+
                     if (history_count > 0) {
-                        if (history_index == -1) {
+
+                        if (history_index == -1)
+
                             history_index = history_count - 1;
-                        } else if (history_index > 0) {
+
+                        else if (history_index > 0)
+
                             history_index--;
-                        }
+
                         strncpy(buffer, history[history_index], MAX_INPUT);
+
                         pos = strlen(buffer);
+
                     }
-                }
-                else if (seq[1] == 'B') {
+
+                } else if (seq[1] == 'B') {
+
                     if (history_index != -1) {
+
                         if (history_index < history_count - 1) {
+
                             history_index++;
+
                             strncpy(buffer, history[history_index], MAX_INPUT);
+
                             pos = strlen(buffer);
+
                         } else {
+
                             history_index = -1;
+
                             buffer[0] = '\0';
+
                             pos = 0;
+
                         }
+
                     }
+
                 }
-                
+
+
+                show_prompt();
+
+                printf("%s", buffer);
+
+                fflush(stdout);
+
+                continue;
+
+            }
+
+        }
+
+
+        // Backspace
+
+        if (ch == 127 || ch == '\b') {
+
+            if (pos > 0) {
+
+                pos--;
+
+                buffer[pos] = '\0';
+
+                printf("\b \b");
+
+                fflush(stdout);
+
+            }
+
+            continue;
+
+        }
+
+
+        // TAB 补全逻辑
+
+        if (ch == '\t') {
+
+            tab_count++;
+
+            buffer[pos] = '\0';
+
+
+            char *last_space = strrchr(buffer, ' ');
+
+            char *prefix = last_space ? last_space + 1 : buffer;
+
+            int plen = strlen(prefix);
+
+            int is_first_token = (last_space == NULL);
+
+
+            char *matches[256];
+
+            int match_count = 0;
+
+
+            // === 1. 首词 → 补全命令 ===
+
+            if (is_first_token && prefix[0] != '$') {
+
+                const char *builtins[] = {"cd", "ls", "cat", "echo", "alias", "unalias", "grep", "type", "history", "clearhistory", NULL};
+
+                for (int i = 0; builtins[i]; i++) {
+
+                    if (strncmp(builtins[i], prefix, plen) == 0)
+                        matches[match_count++] = (char *)builtins[i];
+                }
+
+
+                // 可执行文件 (PATH)
+                /*
+                char *path = getenv("PATH");
+                if (path) {
+                    char *copy = strdup(path);
+                    char *dir = strtok(copy, ":");
+                    while (dir) {
+                        DIR *dp = opendir(dir);
+                        if (dp) {
+                            struct dirent *entry;
+                            while ((entry = readdir(dp))) {
+                                if (strncmp(entry->d_name, prefix, plen) == 0)
+                                    matches[match_count++] = entry->d_name;
+                            }
+
+                            closedir(dp);
+                        }
+                        dir = strtok(NULL, ":");
+                    }
+
+                    free(copy);
+                }*/
+
+            }
+            // === 2. 非首词补全 → 文件名
+
+            if (!is_first_token && prefix[0] != '$') {
+                DIR *dp = opendir(".");
+                if (dp) {
+                    struct dirent *entry;
+                    while ((entry = readdir(dp))) {
+                        if (strncmp(entry->d_name, prefix, plen) == 0)
+                            matches[match_count++] = entry->d_name;
+                    }
+
+                    closedir(dp);
+                }
+
+            }
+            // === 3. 环境变量补全
+            if (prefix[0] == '$') {
+                extern char **environ;
+                for (int i = 0; environ[i]; i++) {
+                    char *eq = strchr(environ[i], '=');
+                    if (eq && strncmp(environ[i], prefix + 1, plen - 1) == 0) {
+                        int len = eq - environ[i];
+                        static char var[128];
+                        snprintf(var, sizeof(var), "$%.*s", len, environ[i]);
+                        matches[match_count++] = var;
+                    }
+
+                }
+            }
+            if (match_count == 1) {
+                const char *completion = matches[0];
+                int cplen = strlen(completion);
+                pos = (last_space ? (last_space - buffer + 1) : 0);
+                strcpy(&buffer[pos], completion);
+                pos += cplen;
+                buffer[pos] = '\0';
+                printf("\033[2K\r");
                 show_prompt();
                 printf("%s", buffer);
                 fflush(stdout);
-                continue;
-            }
-        }
+                tab_count = 0;
 
-        if (ch == 127) {
-            if (pos > 0) {
-                pos--;
-                buffer[pos] = '\0';
-                printf("\b \b");
+            } else if (match_count > 1 && tab_count >= 2) {
+                printf("\n");
+                for (int i = 0; i < match_count; i++) {
+                    printf("%s  ", matches[i]);
+                }
+                printf("\n");
+                show_prompt();
+                printf("%s", buffer);
+                fflush(stdout);
+                tab_count = 0;
             }
             continue;
         }
 
-        if (pos < MAX_INPUT - 1 && ch >= 32 && ch <= 126) {
+        // 普通可见字符
+        if (pos < MAX_INPUT - 1 && isprint(ch)) {
             buffer[pos++] = ch;
             buffer[pos] = '\0';
             putchar(ch);
             fflush(stdout);
+            tab_count = 0;
         }
     }
-
     tcsetattr(STDIN_FILENO, TCSANOW, &oldt);
     history_index = -1;
     return strdup(buffer);
+
 }
+
+
+
+
