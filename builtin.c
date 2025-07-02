@@ -672,7 +672,20 @@ int handle_builtin(char **args, const char *full_line) {
     else if (strcmp(args[0], "cat") == 0) my_cat(args);
     else if (strcmp(args[0], "grep") == 0) my_grep(args);
     else if (strcmp(args[0], "echo") == 0) my_echo(args);
-    else if (strcmp(args[0], "history") == 0) show_history();
+    else if (strcmp(args[0], "history") == 0) {
+        if (!args[1]) {
+            show_history();
+        } else {
+            int n = atoi(args[1]);
+            if (n <= 0 || n > history_count) {
+                fprintf(stderr, "Invalid number for history: %s\n", args[1]);
+            } else {
+                for (int i = history_count - n; i < history_count; i++) {
+                    printf("%d %s\n", i + 1, history[i]);
+                }
+            }
+        }
+    }
     else if (strcmp(args[0], "clearhistory") == 0) clear_history();
     else if (strcmp(args[0], "alias") == 0) {
         if (!args[1]) {
