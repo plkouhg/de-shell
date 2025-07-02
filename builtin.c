@@ -10,6 +10,8 @@
 #include "builtin.h"
 #include <regex.h>
 #include <limits.h>
+#include <fcntl.h>
+#include <sys/stat.h>
 #define MAX_LINE 1024
 #define COLOR_CYAN    "\x1b[36m"
 #define COLOR_RESET   "\x1b[0m"
@@ -663,7 +665,49 @@ void load_aliases_from_file() {
 }
 
 int run_builtin(char **args, char *raw_line) {
-    return handle_builtin(args, raw_line);
+    // 新增：临时保存原始标准输入输出
+    int saved_stdin = dup(STDIN_FILENO);
+    int saved_stdout = dup(STDOUT_FILENO);
+    
+    // 新增：解析重定向
+    char *input_file = NULL;
+    char *output_file = NULL;
+    parse_redirection(args, &input_file, &output_file);
+    compress_args(args);
+    
+    // 新增：输入重定向
+    if (input_file) {
+        int fd = open(input_file, O_RDONLY);
+        if (fd < 0) {
+            perror("打开输入文件失败");
+            return 1;
+        }
+        dup2(fd, STDIN_FILENO);
+        close(fd);
+    }
+    
+    // 新增：输出重定向
+    if (output_file) {
+        int fd = open(output_file, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+        if (fd < 0) {
+            perror("创建输出文件失败");
+            return 1;
+        }
+        dup2(fd, STDOUT_FILENO);
+        close(fd);
+    }
+    
+    // 执行内置命令
+    int result = handle_builtin(args, raw_line);
+    
+    // 新增：恢复标准输入输出
+    fflush(stdout);
+    dup2(saved_stdin, STDIN_FILENO);
+    dup2(saved_stdout, STDOUT_FILENO);
+    close(saved_stdin);
+    close(saved_stdout);
+    
+    return result;
 }
 
 int handle_builtin(char **args, const char *full_line) {
