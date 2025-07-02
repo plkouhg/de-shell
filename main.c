@@ -1,3 +1,4 @@
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -20,7 +21,7 @@ void handle_sigint(int sig) {
 }
 
 void parse_and_expand_alias(char *line, char **args) {
-    static char reconstructed_line[MAX_LINE];  // 全局静态变量，防止内存失效
+    static char reconstructed_line[MAX_LINE];
     memset(reconstructed_line, 0, sizeof(reconstructed_line));
 
     char original_line[MAX_LINE];
@@ -28,14 +29,12 @@ void parse_and_expand_alias(char *line, char **args) {
     original_line[sizeof(original_line) - 1] = '\0';
 
     char *first_token = strtok(original_line, " \t\n");
-
     if (!first_token) {
         args[0] = NULL;
         return;
     }
 
     const char *alias_cmd = resolve_alias(first_token);
-
     if (alias_cmd) {
         strncat(reconstructed_line, alias_cmd, sizeof(reconstructed_line) - 1);
         char *rest = line + (first_token - original_line) + strlen(first_token);
@@ -102,83 +101,65 @@ int main() {
     char *args[MAX_ARGS];
     char command_buffer[MAX_COMMAND_LENGTH];
     char temp_line[MAX_COMMAND_LENGTH];
-    
+
     signal(SIGINT, handle_sigint);
 
     if (!login_shell()) return 1;
 
-    //load_history_from_file();
+    load_history_from_file();
     load_aliases_from_file();
+
     while (1) {
         show_prompt();
-        command_buffer[0] = '\0'; // 清空命令缓冲区
-        temp_line[0]='\0';
+        command_buffer[0] = '\0';
+        temp_line[0] = '\0';
+
         line = read_input_line();
         if (!line) continue;
 
-        // 处理第一行
         strncpy(temp_line, line, sizeof(temp_line) - 1);
         temp_line[sizeof(temp_line) - 1] = '\0';
         temp_line[strcspn(temp_line, "\n")] = '\0';
-        
-        // 初始化command_buffer
         strncpy(command_buffer, temp_line, sizeof(command_buffer) - 1);
-        command_buffer[sizeof(command_buffer) - 1] = '\0';
 
-        // 检查是否需要续行
         while (strlen(temp_line) > 0 && temp_line[strlen(temp_line) - 1] == '\\') {
-            // 移除续行符
             temp_line[strlen(temp_line) - 1] = '\0';
-            
-            // 更新command_buffer（只移除最后的反斜杠）
             size_t current_len = strlen(command_buffer);
             if (current_len > 0 && command_buffer[current_len - 1] == '\\') {
                 command_buffer[current_len - 1] = '\0';
             }
-
-            // 读取下一行
-            free(line); // 释放前一行内存
+            free(line);
             line = read_input_line();
             if (!line) break;
-            
-            // 处理新行
             strncpy(temp_line, line, sizeof(temp_line) - 1);
             temp_line[sizeof(temp_line) - 1] = '\0';
             temp_line[strcspn(temp_line, "\n")] = '\0';
-
-            // 检查缓冲区空间
             if (strlen(command_buffer) + strlen(temp_line) >= sizeof(command_buffer) - 1) {
-                fprintf(stderr, "错误：命令过长，超出缓冲区限制！\n");
+                fprintf(stderr, "\u9519\u8bef\uff1a\u547d\u4ee4\u8fc7\u957f\uff0c\u8d85\u51fa\u7f13\u51b2\u533a\u9650\u5236\uff01\n");
                 free(line);
-                command_buffer[0] = '\0'; // 清空无效命令
+                command_buffer[0] = '\0';
                 break;
             }
-
-            // 安全拼接
             strcat(command_buffer, temp_line);
         }
 
+        free(line);
+        line = strdup(command_buffer);
 
-        free(line); // 释放旧内存
-        line = strdup(command_buffer); // 创建新拷贝
-        //printf("完整命令是: %s\n", line);
-        //以下逻辑保持不变
-        
         if (!line || !is_valid_command(line)) {
             free(line);
             continue;
         }
 
-        char *line_copy = strdup(line);  // 保存原始命令用于历史记录
-
-        parse_and_expand_alias(line,args);
+        char *line_copy = strdup(line);
+        parse_and_expand_alias(line, args);
         if (args[0] == NULL) {
             free(line);
             free(line_copy);
             continue;
         }
 
-        filter_and_add_history(line_copy);  // 使用校验后的命令添加到历史记录
+        filter_and_add_history(line_copy);
 
         if (strcmp(args[0], "exit") == 0) {
             free(line);
@@ -186,13 +167,53 @@ int main() {
             break;
         }
 
-        if (handle_builtin(args,line_copy)) {
-            free(line);
-            free(line_copy);
-            continue;
+        int background = 0;
+        int i = 0;
+        while (args[i]) i++;
+        if (i > 0 && strcmp(args[i - 1], "&") == 0) {
+            background = 1;
+            args[i - 1] = NULL;
         }
 
-        fprintf(stderr, "Unknown command: %s\n", args[0]);
+        int is_builtin_cmd = is_builtin(args[0]);
+        if (is_builtin_cmd) {
+            // cd, alias, unalias, history 等应在主进程运行
+            if (strcmp(args[0], "cd") == 0 ||
+                strcmp(args[0], "alias") == 0 ||
+                strcmp(args[0], "unalias") == 0 ||
+                strcmp(args[0], "history") == 0 ||
+                strcmp(args[0], "clearhistory") == 0) {
+                run_builtin(args, line_copy);
+                free(line);
+                free(line_copy);
+                continue;
+            }
+        }
+
+        pid_t pid = fork();
+        if (pid < 0) {
+            perror("fork failed");
+        } else if (pid == 0) {
+            if (is_builtin_cmd) {
+                run_builtin(args, line_copy);
+            } else {
+                execvp(args[0], args);
+            }
+            exit(1);
+        } else {
+            if (background) {
+                usleep(1000);
+                fprintf(stderr, "[PID %d] running in background\n", pid);
+                fflush(stderr);
+            } else {
+                int status;
+                waitpid(pid, &status, 0);
+                if (!is_builtin_cmd && WIFEXITED(status) && WEXITSTATUS(status) != 0) {
+                    fprintf(stderr, "Unknown command: %s\n", args[0]);
+                }
+            }
+        }
+
         free(line);
         free(line_copy);
     }
@@ -200,3 +221,5 @@ int main() {
     save_history_to_file();
     return 0;
 }
+
+

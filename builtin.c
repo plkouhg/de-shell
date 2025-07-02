@@ -662,6 +662,10 @@ void load_aliases_from_file() {
     fclose(fp);
 }
 
+int run_builtin(char **args, char *raw_line) {
+    return handle_builtin(args, raw_line);
+}
+
 int handle_builtin(char **args, const char *full_line) {
     if (strcmp(args[0], "ls") == 0) my_ls(args);
     else if (strcmp(args[0], "cd") == 0) my_cd(args);

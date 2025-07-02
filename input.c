@@ -6,7 +6,7 @@
 #include "builtin.h"
 #include "input.h" 
 
-#define MAX_INPUT 1024
+//#define MAX_INPUT 1024
 
 extern char *history[HISTORY_SIZE];
 extern int history_count;
@@ -24,10 +24,10 @@ static int is_valid_command(const char *cmd) {
         if (!isprint(*p) && !isspace(*p)) return 0;
     }
     
-    // 特殊检查：cd 后必须跟空格（暂时不需要）
-    //if (strncmp(cmd, "cd", 2) == 0 && cmd[2] != ' ' && cmd[2] != '\0') {
-    //    return 0;
-    //}
+    // 特殊检查：cd 后必须跟空格
+    if (strncmp(cmd, "cd", 2) == 0 && cmd[2] != ' ' && cmd[2] != '\0') {
+        return 0;
+    }
     
     return 1;
 }
@@ -36,10 +36,10 @@ static int is_valid_command(const char *cmd) {
 void filter_and_add_history(const char *cmd) {
     if (!is_valid_command(cmd)) return;
     
-    // 检查整个历史记录是否已存在
-    for (int i = 0; i < history_count; i++) {
-        if (strcmp(history[i], cmd) == 0) return;
-    }
+    // 检查整个历史记录是否已存在(目前不需要)
+    //for (int i = 0; i < history_count; i++) {
+    //    if (strcmp(history[i], cmd) == 0) return;
+    //}
     
     add_history(cmd);
 }
