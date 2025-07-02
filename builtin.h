@@ -23,6 +23,7 @@ void my_echo(char **args);
 void my_ls(char **args);
 void my_cat(char **args);
 void my_grep(char **args);
+void my_type(char **args);
 void add_history(const char *cmd);
 void show_history();
 void clear_history();
@@ -58,5 +59,6 @@ void remove_alias(const char *name);
 const char *resolve_alias(const char *name);
 void save_aliases_to_file();
 void load_aliases_from_file();
-
+int is_builtin(const char *cmd);
+char *find_command_in_path(const char *cmd);
 #endif
