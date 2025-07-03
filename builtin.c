@@ -20,30 +20,85 @@ int history_count = 0;
 Alias aliases[MAX_ALIASES];
 int alias_count = 0;
 
+
 void my_ls(char **args) {
     int long_format = 0;
+    int start = 1;
+
+    // 检查是否有 -l 参数
     for (int i = 1; args[i]; i++) {
         if (strcmp(args[i], "-l") == 0) {
             long_format = 1;
+            start++;
         }
     }
 
-    DIR *dir = opendir(".");
-    if (!dir) {
-        perror("opendir");
-        return;
+    if (!args[start]) {
+        args[start] = ".";
+        args[start + 1] = NULL;
     }
 
-    struct dirent *entry;
-    while ((entry = readdir(dir)) != NULL) {
-        if (!strcmp(entry->d_name, ".") || !strcmp(entry->d_name, ".."))
+    for (int i = start; args[i]; i++) {
+        struct stat st;
+        if (stat(args[i], &st) != 0) {
+            perror(args[i]);
             continue;
+        }
 
-        if (!long_format) {
-            printf("%s  ", entry->d_name);
+        // 如果是目录，就列出目录内容
+        if (S_ISDIR(st.st_mode)) {
+            DIR *dir = opendir(args[i]);
+            if (!dir) {
+                perror(args[i]);
+                continue;
+            }
+
+            struct dirent *entry;
+            while ((entry = readdir(dir))) {
+                if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0)
+                    continue;
+
+                char path[512];
+                snprintf(path, sizeof(path), "%s/%s", args[i], entry->d_name);
+
+                if (!long_format) {
+                    printf("%s  ", entry->d_name);
+                } else {
+                    struct stat entry_stat;
+                    if (stat(path, &entry_stat) == 0) {
+                        struct passwd *pw = getpwuid(entry_stat.st_uid);
+                        struct group  *gr = getgrgid(entry_stat.st_gid);
+                        printf("%c%c%c%c%c%c%c%c%c%c %3ld %-8s %-8s %8ld %s\n",
+                            S_ISDIR(entry_stat.st_mode) ? 'd' : '-',
+                            entry_stat.st_mode & S_IRUSR ? 'r' : '-',
+                            entry_stat.st_mode & S_IWUSR ? 'w' : '-',
+                            entry_stat.st_mode & S_IXUSR ? 'x' : '-',
+                            entry_stat.st_mode & S_IRGRP ? 'r' : '-',
+                            entry_stat.st_mode & S_IWGRP ? 'w' : '-',
+                            entry_stat.st_mode & S_IXGRP ? 'x' : '-',
+                            entry_stat.st_mode & S_IROTH ? 'r' : '-',
+                            entry_stat.st_mode & S_IWOTH ? 'w' : '-',
+                            entry_stat.st_mode & S_IXOTH ? 'x' : '-',
+                            (long)entry_stat.st_nlink,
+                            pw->pw_name,
+                            gr->gr_name,
+                            (long)entry_stat.st_size,
+                            entry->d_name
+                        );
+                    }
+                }
+            }
+
+            closedir(dir);
+            //if (!long_format) printf("\n");
+
         } else {
-            struct stat st;
-            if (stat(entry->d_name, &st) == 0) {
+            // 普通文件直接打印
+            if (!long_format) {
+                printf("%s  ", args[i]);
+            } else {
+                struct passwd *pw = getpwuid(st.st_uid);
+                struct group  *gr = getgrgid(st.st_gid);
                 printf("%c%c%c%c%c%c%c%c%c%c %3ld %-8s %-8s %8ld %s\n",
                     S_ISDIR(st.st_mode) ? 'd' : '-',
                     st.st_mode & S_IRUSR ? 'r' : '-',
@@ -56,18 +111,15 @@ void my_ls(char **args) {
                     st.st_mode & S_IWOTH ? 'w' : '-',
                     st.st_mode & S_IXOTH ? 'x' : '-',
                     (long)st.st_nlink,
-                    getpwuid(st.st_uid)->pw_name,
-                    getgrgid(st.st_gid)->gr_name,
+                    pw->pw_name,
+                    gr->gr_name,
                     (long)st.st_size,
-                    entry->d_name
+                    args[i]
                 );
             }
         }
     }
-
     if (!long_format) printf("\n");
-
-    closedir(dir);
 }
 
 void my_cd(char **args) {

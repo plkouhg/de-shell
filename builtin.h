@@ -66,4 +66,7 @@ void save_aliases_to_file();
 void load_aliases_from_file();
 void reset_aliases();
 
+void parse_redirection(char **args, char **input_file, char **output_file);
+void compress_args(char **args);
+
 #endif

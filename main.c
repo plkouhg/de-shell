@@ -249,6 +249,52 @@ void execute_pipeline(char **args, int pipe_count, int background, int is_builti
         fprintf(stderr, "[Pipeline %d] running in background\n", getpid());
     }
 }
+
+// 新增函数：判断是否为逻辑组合或命令组
+int is_group_or_logic(char *line) {
+    return (strchr(line, '(') || strstr(line, "&&") || strstr(line, "||"));
+}
+
+// 新增函数：处理命令组合与命令组
+int execute_group_logic(char *line) {
+    while (*line == ' ') line++;
+    if (*line == '\0') return 0;
+
+    int background = 0;
+    char *amp = strrchr(line, '&');
+    if (amp && *(amp + 1) == '\0') {
+        background = 1;
+        *amp = '\0';
+    }
+
+    if (*line == '(') {
+        char *end = strrchr(line, ')');
+        if (end) {
+            *end = '\0';
+            if (background) {
+                if (fork() == 0) exit(system(line + 1));
+                return 0;
+            } else {
+                return system(line + 1);
+            }
+        }
+    }
+
+    char *and = strstr(line, "&&");
+    char *or = strstr(line, "||");
+    if (and && (!or || and < or)) {
+        *and = '\0';
+        int status = execute_group_logic(line);
+        return (status == 0) ? execute_group_logic(and + 2) : status;
+    } else if (or) {
+        *or = '\0';
+        int status = execute_group_logic(line);
+        return (status != 0) ? execute_group_logic(or + 2) : 0;
+    }
+
+    return -1;  // fallback
+}
+
 int main() {
     char *line;
     char *args[MAX_ARGS];
@@ -305,6 +351,10 @@ int main() {
         }
 
         char *line_copy = strdup(line);
+        if (is_group_or_logic(line)) {
+            execute_group_logic(line);
+            continue;
+        }
         parse_and_expand_alias(line, args);
         if (args[0] == NULL) {
             free(line);
@@ -313,7 +363,8 @@ int main() {
         }
 
         filter_and_add_history(line_copy);
-
+        char **expanded = expand_args(args);
+        memcpy(args,expanded,sizeof(char *) * MAX_ARGS);
         if (strcmp(args[0], "exit") == 0) {
             free(line);
             free(line_copy);
@@ -359,6 +410,11 @@ int main() {
                 perror("fork failed");
             } else if(pid == 0) {
                 // 子进程处理重定向
+                    if (background) {
+                        //usleep(1000);
+                        printf("\n");
+                        fflush(stderr);
+                    }
                 char *input_file = NULL;
                 char *output_file = NULL;
                 parse_redirection(args, &input_file, &output_file);
@@ -393,7 +449,7 @@ int main() {
                 exit(1);
             } else {
                 if (background) {
-                    usleep(1000);
+                    //usleep(1000);
                     fprintf(stderr, "[PID %d] running in background\n", pid);
                     fflush(stderr);
                 } else {
