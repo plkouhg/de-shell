@@ -349,7 +349,7 @@ void process_directory(const char *dirpath, const char *pattern, regex_t *regex,
     closedir(dir);
 }
 
-// 辅助函数：处理单个文件
+
 void process_file(const char *filename, const char *pattern, regex_t *regex,
                  int ignore_case, int invert_match, int line_number,
                  int count_only, int files_with_matches,
@@ -360,99 +360,64 @@ void process_file(const char *filename, const char *pattern, regex_t *regex,
         perror(filename);
         return;
     }
-    
-    char line[4096];
-    int line_num = 0;
-    int match_count = 0;
-    int *matches = NULL;
-    int lines_allocated = 0;
-    int lines_printed = 0;
-    
-    // 如果需要上下文，我们需要存储匹配的行号
-    if (after_context || before_context) {
-        lines_allocated = 100;
-        matches = malloc(lines_allocated * sizeof(int));
+
+    char *lines[10000];  // 存所有行
+    int should_print[10000] = {0}; // 标记哪些行要打印
+    int is_match_line[10000] = {0}; // 记录哪些是匹配行
+    int total_lines = 0;
+
+    // 读取所有行
+    char buf[4096];
+    while (fgets(buf, sizeof(buf), fp)) {
+        lines[total_lines] = strdup(buf);
+        total_lines++;
     }
-    
-    // 第一次遍历：查找匹配行
-    while (fgets(line, sizeof(line), fp)) {
-        line_num++;
-        int match = (regexec(regex, line, 0, NULL, 0) == 0);
-        if (invert_match) match = !match;
-        
-        if (match) {
-            if (count_only || files_with_matches) {
-                match_count++;
-            } else if (after_context || before_context) {
-                // 存储匹配行号
-                if (line_num >= lines_allocated) {
-                    lines_allocated *= 2;
-                    matches = realloc(matches, lines_allocated * sizeof(int));
-                }
-                matches[match_count++] = line_num;
+    fclose(fp);
+
+    // 第一次遍历：标记匹配行并处理上下文范围
+    int match_count = 0;
+    for (int i = 0; i < total_lines; i++) {
+        int matched = (regexec(regex, lines[i], 0, NULL, 0) == 0);
+        if (invert_match) matched = !matched;
+
+        if (matched) {
+            is_match_line[i] = 1;
+            match_count++;
+
+            int start = before_context ? ((i - context_lines >= 0) ? i - context_lines : 0) : i;
+            int end = after_context ? ((i + context_lines < total_lines) ? i + context_lines : total_lines - 1) : i;
+
+            for (int j = start; j <= end; j++) {
+                should_print[j] = 1;
             }
         }
     }
-    
-    // 处理 -l 和 -c 选项
+
+    // 处理 -l 和 -c
     if (files_with_matches) {
-        if (match_count > 0) {
-            printf("%s\n", filename);
-        }
-        fclose(fp);
-        if (matches) free(matches);
-        return;
+        if (match_count > 0) printf("%s\n", filename);
+        goto cleanup;
     }
-    
+
     if (count_only) {
         printf("%s:%d\n", filename, match_count);
-        fclose(fp);
-        if (matches) free(matches);
-        return;
+        goto cleanup;
     }
-    
-    // 第二次遍历：输出结果
-    rewind(fp);
-    line_num = 0;
-    int last_printed_line = -1;
-    
-    while (fgets(line, sizeof(line), fp)) {
-        line_num++;
-        int match = (regexec(regex, line, 0, NULL, 0) == 0);
-        if (invert_match) match = !match;
-        
-        // 处理上下文
-        int should_print = 0;
-        
-        if (match) {
-            should_print = 1;
-            if (before_context) {
-                // 打印前N行
-                int start = (line_num - context_lines > 1) ? line_num - context_lines : 1;
-                for (int i = start; i < line_num; i++) {
-                    if (i > last_printed_line) {
-                        print_line(filename, i, line, line_number, 0, pattern);
-                        last_printed_line = i;
-                    }
-                }
-            }
-        }
-        
-        if (match || 
-            (after_context && lines_printed < match_count && line_num <= matches[lines_printed] + context_lines)) {
-            should_print = 1;
-        }
-        
-        if (should_print && line_num > last_printed_line) {
-            print_line(filename, line_num, line, line_number, match && only_matching, pattern);
-            last_printed_line = line_num;
-            if (match) lines_printed++;
+
+    // 第二次遍历：输出已标记的行
+    for (int i = 0; i < total_lines; i++) {
+        if (should_print[i]) {
+            print_line(filename, i + 1, lines[i], line_number, is_match_line[i] && only_matching, pattern);
         }
     }
-    
-    fclose(fp);
-    if (matches) free(matches);
+
+cleanup:
+    for (int i = 0; i < total_lines; i++) {
+        free(lines[i]);
+    }
 }
+
+
 
 // 辅助函数：打印一行
 void print_line(const char *filename, int line_num, const char *line, 
