@@ -8,6 +8,7 @@
 #include <signal.h>
 #include <fcntl.h>
 #include <sys/stat.h>
+#include <ctype.h>
 #include "builtin.h"
 #include "input.h"
 
@@ -267,19 +268,41 @@ int execute_group_logic(char *line) {
         *amp = '\0';
     }
 
+    // 括号包裹优先
     if (*line == '(') {
         char *end = strrchr(line, ')');
         if (end) {
             *end = '\0';
+            char *inner = line + 1;
+            while (*inner == ' ' || *inner == '\t') inner++;
             if (background) {
-                if (fork() == 0) exit(system(line + 1));
+                if (fork() == 0) exit(system(inner));
                 return 0;
             } else {
-                return system(line + 1);
+                return system(inner);
             }
         }
     }
 
+    // 多命令串联 ; （一次性执行所有子句）
+    if (strchr(line, ';')) {
+        char *saveptr;
+        char *segment = strtok_r(line, ";", &saveptr);
+        while (segment) {
+            while (*segment == ' ' || *segment == '\t') segment++;
+            if (*segment) {
+                if (background) {
+                    if (fork() == 0) exit(system(segment));
+                } else {
+                    system(segment);
+                }
+            }
+            segment = strtok_r(NULL, ";", &saveptr);
+        }
+        return 0;
+    }
+
+    // 逻辑组合
     char *and = strstr(line, "&&");
     char *or = strstr(line, "||");
     if (and && (!or || and < or)) {
@@ -292,8 +315,23 @@ int execute_group_logic(char *line) {
         return (status != 0) ? execute_group_logic(or + 2) : 0;
     }
 
-    return -1;  // fallback
+    // 最终 fallback 执行单条命令
+    int pid = fork();
+    if (pid == 0) {
+        execlp("/bin/sh", "sh", "-c", line, NULL);
+        perror("exec");
+        exit(127);
+    } else if (!background) {
+        int status;
+        waitpid(pid, &status, 0);
+        return WEXITSTATUS(status);
+    } else {
+        printf("[PID %d] running in background\n", pid);
+        return 0;
+    }
 }
+
+
 
 int main() {
     char *line;
@@ -351,8 +389,10 @@ int main() {
         }
 
         char *line_copy = strdup(line);
-        if (is_group_or_logic(line)) {
+        if (strchr(line,";")||strstr(line,"&&")||strstr(line,"||")||line[0]=='(') {
             execute_group_logic(line);
+            free(line);
+            free(line_copy);
             continue;
         }
         parse_and_expand_alias(line, args);
